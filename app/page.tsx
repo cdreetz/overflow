@@ -1,103 +1,403 @@
-import Image from "next/image";
+'use client'
+import React, { useState, useRef, useEffect } from "react";
+import {
+  Component,
+  Connection,
+  ConnectingState,
+  DragOffset,
+  ComponentProps,
+} from "./types";
+import InputComponent from "../components/InputComponent";
+import ChatComponent from "../components/ChatComponent";
 
-export default function Home() {
+// Main application component
+const App = () => {
+  // State for tracking components, connections, and interaction states
+  const [components, setComponents] = useState<Component[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [nextId, setNextId] = useState(1);
+  const [connecting, setConnecting] = useState<ConnectingState | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState<DragOffset>({ x: 0, y: 0 });
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Add a new component to the canvas
+  const addComponent = (type: "input" | "chat") => {
+    console.log(`Adding new ${type} component...`);
+    
+    // Create proper data structure based on component type
+    const componentData = type === "input" 
+      ? { value: "" } 
+      : { messages: [] };
+      
+    const newComponent = {
+      id: `component-${nextId}`,
+      type,
+      position: { x: 100, y: 100 + ((nextId * 30) % 300) },
+      width: type === "input" ? 300 : 350,
+      height: type === "input" ? 120 : 250,
+      data: componentData,
+    };
+
+    console.log(`Created new ${type} component:`, JSON.stringify(newComponent));
+    
+    // Use functional update to ensure we have the latest state
+    setComponents(prevComponents => {
+      const updated = [...prevComponents, newComponent];
+      console.log("New components state:", JSON.stringify(updated));
+      return updated;
+    });
+    
+    setNextId(nextId + 1);
+  };
+
+  // Handle mouse down on a component
+  const handleMouseDown = (e: React.MouseEvent, component: Component): void => {
+    e.stopPropagation();
+    if (!canvasRef.current) return;
+
+    const boundingRect = canvasRef.current.getBoundingClientRect();
+    setDragging(component.id);
+    setDragOffset({
+      x: e.clientX - boundingRect.left - component.position.x,
+      y: e.clientY - boundingRect.top - component.position.y,
+    });
+  };
+
+  // Handle mouse move for dragging components
+  const handleMouseMove = (e: React.MouseEvent): void => {
+    if (dragging && canvasRef.current) {
+      const boundingRect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - boundingRect.left - dragOffset.x;
+      const y = e.clientY - boundingRect.top - dragOffset.y;
+
+      setComponents(
+        components.map((comp) =>
+          comp.id === dragging ? { ...comp, position: { x, y } } : comp,
+        ),
+      );
+    }
+
+    // Update connecting line position when creating a connection
+    if (connecting && connecting.source) {
+      setConnecting({
+        ...connecting,
+        mouseX:
+          e.clientX - (canvasRef.current?.getBoundingClientRect().left || 0),
+        mouseY:
+          e.clientY - (canvasRef.current?.getBoundingClientRect().top || 0),
+      });
+    }
+  };
+
+  // Handle mouse up to stop dragging
+  const handleMouseUp = () => {
+    setDragging(null);
+  };
+
+  // Start creating a connection from a component
+  const startConnection = (sourceId: string) => {
+    setConnecting({ source: sourceId, target: null });
+  };
+
+  // Complete a connection to a target component
+  const completeConnection = (targetId: string) => {
+    if (connecting && connecting.source !== targetId) {
+      console.log("Completing connection from", connecting.source, "to", targetId);
+      
+      // Find the source and target components
+      const sourceComponent = components.find(comp => comp.id === connecting.source);
+      const targetComponent = components.find(comp => comp.id === targetId);
+      
+      // Only connect if source is input and target is chat
+      if (sourceComponent?.type !== "input" || targetComponent?.type !== "chat") {
+        console.log("Invalid connection: can only connect input to chat");
+        setConnecting(null);
+        return;
+      }
+      
+      // Prevent duplicate connections
+      const connectionExists = connections.some(
+        (conn) => conn.source === connecting.source && conn.target === targetId,
+      );
+
+      if (!connectionExists) {
+        const newConnection = {
+          id: `conn-${connecting.source}-${targetId}`,
+          source: connecting.source,
+          target: targetId,
+        };
+        console.log("Adding new connection:", newConnection);
+        setConnections([...connections, newConnection]);
+      } else {
+        console.log("Connection already exists");
+      }
+      setConnecting(null);
+    }
+  };
+
+  // Cancel connection creation
+  const cancelConnection = () => {
+    setConnecting(null);
+  };
+
+  // Update input component value
+  const updateInputValue = (componentId: string, value: string) => {
+    setComponents(
+      components.map((comp) =>
+        comp.id === componentId
+          ? { ...comp, data: { ...comp.data, value } }
+          : comp,
+      ),
+    );
+  };
+
+  // Submit message from input component
+  const submitMessage = (sourceId: string) => {
+    console.log("===== SUBMIT MESSAGE START =====");
+    
+    // Find the input component
+    const inputComponent = components.find((comp) => comp.id === sourceId);
+    if (!inputComponent || inputComponent.type !== "input" || !inputComponent.data.value.trim()) {
+      console.error("Invalid input component or empty message");
+      return;
+    }
+    
+    // Find connected chat components
+    const connections = sourceConnections(sourceId);
+    if (connections.length === 0) {
+      console.error("No connections found");
+      return;
+    }
+    
+    // Create the message
+    const messageText = inputComponent.data.value;
+    const newMessage = {
+      id: `msg-${Date.now()}`,
+      text: messageText,
+      sender: "user",
+      timestamp: new Date().toISOString(),
+    };
+    
+    console.log("Created message:", newMessage);
+    
+    // Directly modify the chat components that are connected to this input
+    connections.forEach(conn => {
+      const targetId = conn.target;
+      
+      // Force a complete component state update 
+      setComponents(prev => {
+        return prev.map(comp => {
+          // If this is the target chat component, add the message
+          if (comp.id === targetId && comp.type === "chat") {
+            // Create a brand new component object
+            return {
+              ...comp,
+              data: {
+                messages: [
+                  ...(Array.isArray(comp.data?.messages) ? comp.data.messages : []),
+                  newMessage
+                ]
+              }
+            };
+          }
+          return comp;
+        });
+      });
+    });
+    
+    // Clear the input value 
+    setComponents(prev => {
+      return prev.map(comp => {
+        if (comp.id === sourceId) {
+          return {
+            ...comp,
+            data: {
+              ...comp.data,
+              value: ""
+            }
+          };
+        }
+        return comp;
+      });
+    });
+    
+    console.log("===== SUBMIT MESSAGE END =====");
+  };
+  
+  // Helper function to find connections from a source
+  const sourceConnections = (sourceId: string) => {
+    return connections.filter(conn => conn.source === sourceId);
+  };
+
+  // Delete a component and its connections
+  const deleteComponent = (componentId: string) => {
+    console.log("Deleting component:", componentId);
+    console.log("Before:", components.length, "components");
+
+    // Make a copy of the components array without the deleted component
+    const updatedComponents = components.filter(
+      (comp) => comp.id !== componentId,
+    );
+
+    // Make a copy of the connections array without connections to/from the deleted component
+    const updatedConnections = connections.filter(
+      (conn) => conn.source !== componentId && conn.target !== componentId,
+    );
+
+    console.log("After:", updatedComponents.length, "components");
+
+    // Update state with the new arrays
+    setComponents(updatedComponents);
+    setConnections(updatedConnections);
+
+    // If we're currently connecting from/to this component, cancel the connection
+    if (
+      connecting &&
+      (connecting.source === componentId || connecting.target === componentId)
+    ) {
+      setConnecting(null);
+    }
+
+    // If we're currently dragging this component, stop dragging
+    if (dragging === componentId) {
+      setDragging(null);
+    }
+  };
+
+  // Calculate connection paths
+  const getConnectionPath = (source: string, target: string): string => {
+    const sourceComponent = components.find((comp) => comp.id === source);
+    const targetComponent = components.find((comp) => comp.id === target);
+
+    if (!sourceComponent || !targetComponent) return "";
+
+    const sourceX = sourceComponent.position.x + sourceComponent.width - 3;
+    const sourceY = sourceComponent.position.y + 50;
+    const targetX = targetComponent.position.x;
+    const targetY = targetComponent.position.y + 50;
+
+    const controlPointX = (sourceX + targetX) / 2;
+
+    return `M ${sourceX} ${sourceY} C ${controlPointX} ${sourceY}, ${controlPointX} ${targetY}, ${targetX} ${targetY}`;
+  };
+
+  // Component wrappers for the UI
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="flex flex-col h-screen">
+      <div className="bg-gray-100 p-3 border-b">
+        <h2 className="text-xl font-bold mb-2">Flow Canvas</h2>
+        <div className="flex space-x-4">
+          <button
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            onClick={() => addComponent("input")}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Add Input
+          </button>
+          <button
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            onClick={() => addComponent("chat")}
           >
-            Read our docs
-          </a>
+            Add Chat
+          </button>
+          {connecting && (
+            <button
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+              onClick={cancelConnection}
+            >
+              Cancel Connection
+            </button>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+
+      <div
+        ref={canvasRef}
+        className="flex-grow bg-gray-50 relative overflow-auto"
+        style={{ height: "calc(100vh - 120px)" }}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
+        <svg className="absolute w-full h-full">
+          {connections.map((connection) => (
+            <path
+              key={connection.id}
+              d={getConnectionPath(connection.source, connection.target)}
+              stroke="#6366f1"
+              strokeWidth="3"
+              fill="none"
+              markerEnd="url(#arrowhead)"
+              className="cursor-pointer"
+              onDoubleClick={() => {
+                // Remove this connection on double click
+                setConnections(connections.filter(conn => conn.id !== connection.id));
+              }}
+            />
+          ))}
+
+          {connecting && connecting.mouseX && connecting.mouseY && (
+            <path
+              d={`M ${
+                components.find((comp) => comp.id === connecting.source)
+                  ?.position.x +
+                (components.find((comp) => comp.id === connecting.source)
+                  ?.width || 0) -
+                3
+              } ${
+                components.find((comp) => comp.id === connecting.source)
+                  ?.position.y + 50
+              } L ${connecting.mouseX} ${connecting.mouseY}`}
+              stroke="#6366f1"
+              strokeWidth="3"
+              strokeDasharray="5,5"
+              fill="none"
+            />
+          )}
+
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="10"
+              markerHeight="7"
+              refX="10"
+              refY="3.5"
+              orient="auto"
+            >
+              <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
+            </marker>
+          </defs>
+        </svg>
+
+        {components.map((component) =>
+          component.type === "input" ? (
+            <InputComponent
+              key={component.id}
+              component={component}
+              handleMouseDown={handleMouseDown}
+              updateInputValue={updateInputValue}
+              submitMessage={submitMessage}
+              startConnection={startConnection}
+              deleteComponent={deleteComponent}
+            />
+          ) : (
+            <ChatComponent
+              key={component.id}
+              component={component}
+              handleMouseDown={handleMouseDown}
+              completeConnection={completeConnection}
+              connecting={connecting}
+              deleteComponent={deleteComponent}
+            />
+          ),
+        )}
+      </div>
+
+      <div className="bg-gray-100 p-2 border-t text-sm">Version 0.1.0</div>
+
     </div>
   );
-}
+};
+
+export default App;
