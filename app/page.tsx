@@ -389,6 +389,11 @@ const App = () => {
               completeConnection={completeConnection}
               connecting={connecting}
               deleteComponent={deleteComponent}
+              updateComponent={(updatedComponent) => {
+                setComponents(components.map((comp) => 
+                  comp.id === updatedComponent.id ? updatedComponent : comp
+                ));
+              }}
             />
           ),
         )}

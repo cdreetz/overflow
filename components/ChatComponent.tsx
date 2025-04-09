@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { Component, ComponentProps, ConnectingState } from "../app/types";
 
 interface ChatComponentProps extends ComponentProps {
@@ -6,6 +6,7 @@ interface ChatComponentProps extends ComponentProps {
   completeConnection: (targetId: string) => void;
   connecting: ConnectingState | null;
   deleteComponent: (componentId: string) => void;
+  updateComponent?: (updatedComponent: Component) => void;
 }
 
 const ChatComponent: React.FC<ChatComponentProps> = ({
@@ -14,6 +15,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   connecting,
   completeConnection,
   deleteComponent,
+  updateComponent,
 }) => {
   if (component.type !== "chat") {
     console.error("Expected chat component, got:", component.type);
@@ -38,6 +40,10 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   console.log("Complete component data:", JSON.stringify(component));
 
   const chatRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<HTMLDivElement>(null);
+  const [resizing, setResizing] = useState(false);
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 });
+  const [initialSize, setInitialSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     console.log("==== CHAT COMPONENT EFFECT TRIGGERED ====");
@@ -51,6 +57,50 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
     
     // The dependency is just component - React will detect changes to the entire object
   }, [component]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (resizing && updateComponent) {
+        const dx = e.clientX - resizeStart.x;
+        const dy = e.clientY - resizeStart.y;
+        
+        const newWidth = Math.max(200, initialSize.width + dx);
+        const newHeight = Math.max(150, initialSize.height + dy);
+        
+        const updatedComponent = {
+          ...component,
+          width: newWidth,
+          height: newHeight
+        };
+        
+        updateComponent(updatedComponent);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      if (resizing) {
+        setResizing(false);
+      }
+    };
+    
+    if (resizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizing, resizeStart, initialSize, component, updateComponent]);
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizing(true);
+    setResizeStart({ x: e.clientX, y: e.clientY });
+    setInitialSize({ width: component.width, height: component.height });
+  };
 
   const resetStyles = {
     boxSizing: "border-box",
@@ -136,6 +186,20 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
         }}
       >
         {connecting && <div className="w-2 h-2 bg-white rounded-full"></div>}
+      </div>
+
+      {/* Resize handle */}
+      <div
+        ref={resizeRef}
+        className="w-6 h-6 absolute cursor-nwse-resize flex items-center justify-center"
+        style={{ 
+          right: 0, 
+          bottom: 0,
+          background: 'transparent'
+        }}
+        onMouseDown={handleResizeStart}
+      >
+        <div className="w-4 h-4 bg-blue-500 rounded-sm hover:bg-blue-600 transform rotate-45"></div>
       </div>
     </div>
   );
