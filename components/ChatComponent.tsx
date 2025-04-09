@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
 import { Component, ComponentProps, ConnectingState } from "../app/types";
+import { CoreMessage } from "ai";
 
 interface ChatComponentProps extends ComponentProps {
   handleMouseDown: (e: React.MouseEvent, component: Component) => void;
@@ -21,22 +22,25 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
     console.error("Expected chat component, got:", component.type);
     return null;
   }
-  
+
   // Safety check for messages
   if (!component.data) {
     console.error("Chat component has no data:", component);
     component.data = { messages: [] };
   }
-  
+
   if (!Array.isArray(component.data.messages)) {
     console.error("Chat component messages is not an array:", component.data);
     component.data.messages = [];
   }
-  
+
   const messagesCount = component.data.messages?.length || 0;
-  console.log(`Rendering chat component ${component.id} with ${messagesCount} messages:`, JSON.stringify(component.data.messages));
-  
-  // Debug 
+  console.log(
+    `Rendering chat component ${component.id} with ${messagesCount} messages:`,
+    JSON.stringify(component.data.messages),
+  );
+
+  // Debug
   console.log("Complete component data:", JSON.stringify(component));
 
   const chatRef = useRef<HTMLDivElement>(null);
@@ -44,18 +48,155 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   const [resizing, setResizing] = useState(false);
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 });
   const [initialSize, setInitialSize] = useState({ width: 0, height: 0 });
+  const [loading, setLoading] = useState(false);
+
+  // Convert received messages to AI SDK format if needed
+  useEffect(() => {
+    // Only run this if we have updateComponent function
+    if (!updateComponent || !component.data.messages || loading) return;
+
+    // Check if messages are already in CoreMessage format
+    const needsConversion = component.data.messages.some(
+      (msg) => typeof msg.sender === "string" || typeof msg.text === "string",
+    );
+
+    if (needsConversion) {
+      console.log("Converting messages to CoreMessage format...");
+
+      // Map old format messages to CoreMessage format
+      const convertedMessages: CoreMessage[] = component.data.messages.map(
+        (msg) => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.text,
+        }),
+      );
+
+      // Update component with converted messages
+      updateComponent({
+        ...component,
+        data: {
+          ...component.data,
+          messages: convertedMessages,
+        },
+      });
+    }
+  }, [component.data.messages, updateComponent, loading]);
+
+  // State to track the last processed message
+  const [lastProcessedMessageId, setLastProcessedMessageId] = useState<
+    string | null
+  >(null);
+
+  // Process messages through AI when new user message is added
+  useEffect(() => {
+    const processMessages = async () => {
+      // Safety checks
+      if (
+        !updateComponent ||
+        !component.data.messages ||
+        component.data.messages.length === 0
+      )
+        return;
+
+      // Get the last message
+      const lastMessage =
+        component.data.messages[component.data.messages.length - 1];
+
+      // Create a unique ID for this message to track if we've processed it
+      const messageId =
+        "id" in lastMessage
+          ? lastMessage.id
+          : "timestamp" in lastMessage
+            ? lastMessage.timestamp
+            : `msg-${component.data.messages.length}`;
+
+      // Skip if we've already processed this message or if it's not from a user or if we're loading
+      if (
+        messageId === lastProcessedMessageId ||
+        !(lastMessage.role === "user" || lastMessage.sender === "user") ||
+        loading
+      ) {
+        return;
+      }
+
+      console.log("Processing new user message:", lastMessage);
+      setLoading(true);
+      setLastProcessedMessageId(messageId);
+
+      try {
+        // Convert messages to CoreMessage format if needed
+        const messages: CoreMessage[] = component.data.messages.map((msg) => {
+          if ("role" in msg) return msg as CoreMessage;
+          return {
+            role: msg.sender === "user" ? "user" : "assistant",
+            content: msg.text,
+          };
+        });
+
+        // Call API endpoint
+        const response = await fetch("/api/completion", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ messages }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to get response from AI");
+        }
+
+        const data = await response.json();
+
+        // Update chat with all messages
+        // This includes existing messages plus any new AI response messages
+        if (data.messages && data.messages.length > 0) {
+          updateComponent({
+            ...component,
+            data: {
+              ...component.data,
+              messages: [...messages, ...data.messages],
+            },
+          });
+        }
+      } catch (error) {
+        console.error("Error processing message:", error);
+
+        // Add error message
+        const errorMessage: CoreMessage = {
+          role: "assistant",
+          content: "Sorry, I encountered an error processing your request.",
+        };
+
+        updateComponent({
+          ...component,
+          data: {
+            ...component.data,
+            messages: [...component.data.messages, errorMessage],
+          },
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    processMessages();
+  }, [
+    component.data.messages,
+    updateComponent,
+    loading,
+    lastProcessedMessageId,
+  ]);
 
   useEffect(() => {
     console.log("==== CHAT COMPONENT EFFECT TRIGGERED ====");
     console.log("Messages in effect:", JSON.stringify(component.data.messages));
     console.log("Messages count:", component.data.messages?.length);
-    
+
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
       console.log("Scrolled to bottom, height:", chatRef.current.scrollHeight);
     }
-    
-    // The dependency is just component - React will detect changes to the entire object
   }, [component]);
 
   useEffect(() => {
@@ -63,34 +204,34 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
       if (resizing && updateComponent) {
         const dx = e.clientX - resizeStart.x;
         const dy = e.clientY - resizeStart.y;
-        
+
         const newWidth = Math.max(200, initialSize.width + dx);
         const newHeight = Math.max(150, initialSize.height + dy);
-        
+
         const updatedComponent = {
           ...component,
           width: newWidth,
-          height: newHeight
+          height: newHeight,
         };
-        
+
         updateComponent(updatedComponent);
       }
     };
-    
+
     const handleMouseUp = () => {
       if (resizing) {
         setResizing(false);
       }
     };
-    
+
     if (resizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
     }
-    
+
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [resizing, resizeStart, initialSize, component, updateComponent]);
 
@@ -127,8 +268,12 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-lg font-bold text-blue-800 mb-3">Chat</h3>
-        
+
         <div className="flex-grow flex flex-col">
+          {loading && (
+            <div className="text-blue-500 text-center my-2">Processing...</div>
+          )}
+
           {!component.data.messages || component.data.messages.length === 0 ? (
             <div className="text-gray-500 text-center my-auto">
               No messages yet
@@ -136,19 +281,41 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
           ) : (
             // Force a re-render by adding the key prop to this div
             <div key={`messages-${component.data.messages.length}`}>
-              {component.data.messages.map((message, index) => (
-                <div
-                  key={message.id || `msg-${index}`}
-                  className={`p-3 rounded-lg mb-4 ${
-                    message.sender === "user"
-                      ? "bg-blue-400 text-white ml-auto"
-                      : "bg-gray-200 text-gray-800"
-                  }`}
-                  style={{ maxWidth: "80%" }}
-                >
-                  {message.text}
-                </div>
-              ))}
+              {component.data.messages.map((message, index) => {
+                // Determine if message is from user or assistant
+                const isUser =
+                  "sender" in message
+                    ? message.sender === "user"
+                    : message.role === "user";
+
+                // Get the message content
+                const content =
+                  "text" in message ? message.text : message.content;
+
+                return (
+                  <div
+                    key={`msg-${index}`}
+                    className={`p-3 rounded-lg mb-4 ${
+                      isUser
+                        ? "bg-blue-400 text-white ml-auto"
+                        : "bg-gray-200 text-gray-800"
+                    }`}
+                    style={{ maxWidth: "80%" }}
+                  >
+                    {
+                      typeof content === "string"
+                        ? content
+                        : Array.isArray(content)
+                          ? content
+                              .filter((part) => part.type === "text")
+                              .map((part, partIndex) => (
+                                <div key={partIndex}>{part.text}</div>
+                              ))
+                          : String(content) // Fallback for any other type
+                    }
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -171,7 +338,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
           X
         </button>
       </div>
-      
+
       {/* Connection node on left side */}
       <div
         className="w-6 h-6 bg-blue-500 rounded-full absolute cursor-pointer hover:bg-blue-600 flex items-center justify-center"
@@ -192,10 +359,10 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
       <div
         ref={resizeRef}
         className="w-6 h-6 absolute cursor-nwse-resize flex items-center justify-center"
-        style={{ 
-          right: 0, 
+        style={{
+          right: 0,
           bottom: 0,
-          background: 'transparent'
+          background: "transparent",
         }}
         onMouseDown={handleResizeStart}
       >
