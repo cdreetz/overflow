@@ -48,145 +48,12 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   const [resizing, setResizing] = useState(false);
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 });
   const [initialSize, setInitialSize] = useState({ width: 0, height: 0 });
-  const [loading, setLoading] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState(false);
 
-  // Convert received messages to AI SDK format if needed
-  useEffect(() => {
-    // Only run this if we have updateComponent function
-    if (!updateComponent || !component.data.messages || loading) return;
-
-    // Check if messages are already in CoreMessage format
-    const needsConversion = component.data.messages.some(
-      (msg) => typeof msg.sender === "string" || typeof msg.text === "string",
-    );
-
-    if (needsConversion) {
-      console.log("Converting messages to CoreMessage format...");
-
-      // Map old format messages to CoreMessage format
-      const convertedMessages: CoreMessage[] = component.data.messages.map(
-        (msg) => ({
-          role: msg.sender === "user" ? "user" : "assistant",
-          content: msg.text,
-        }),
-      );
-
-      // Update component with converted messages
-      updateComponent({
-        ...component,
-        data: {
-          ...component.data,
-          messages: convertedMessages,
-        },
-      });
-    }
-  }, [component.data.messages, updateComponent, loading]);
-
-  // State to track the last processed message
-  const [lastProcessedMessageId, setLastProcessedMessageId] = useState<
-    string | null
-  >(null);
-
-  // Process messages through AI when new user message is added
-  useEffect(() => {
-    const processMessages = async () => {
-      // Safety checks
-      if (
-        !updateComponent ||
-        !component.data.messages ||
-        component.data.messages.length === 0
-      )
-        return;
-
-      // Get the last message
-      const lastMessage =
-        component.data.messages[component.data.messages.length - 1];
-
-      // Create a unique ID for this message to track if we've processed it
-      const messageId =
-        "id" in lastMessage
-          ? lastMessage.id
-          : "timestamp" in lastMessage
-            ? lastMessage.timestamp
-            : `msg-${component.data.messages.length}`;
-
-      // Skip if we've already processed this message or if it's not from a user or if we're loading
-      if (
-        messageId === lastProcessedMessageId ||
-        !(lastMessage.role === "user" || lastMessage.sender === "user") ||
-        loading
-      ) {
-        return;
-      }
-
-      console.log("Processing new user message:", lastMessage);
-      setLoading(true);
-      setLastProcessedMessageId(messageId);
-
-      try {
-        // Convert messages to CoreMessage format if needed
-        const messages: CoreMessage[] = component.data.messages.map((msg) => {
-          if ("role" in msg) return msg as CoreMessage;
-          return {
-            role: msg.sender === "user" ? "user" : "assistant",
-            content: msg.text,
-          };
-        });
-
-        // Call API endpoint
-        const response = await fetch("/api/completion", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ messages }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to get response from AI");
-        }
-
-        const data = await response.json();
-
-        // Update chat with all messages
-        // This includes existing messages plus any new AI response messages
-        if (data.messages && data.messages.length > 0) {
-          updateComponent({
-            ...component,
-            data: {
-              ...component.data,
-              messages: [...messages, ...data.messages],
-            },
-          });
-        }
-      } catch (error) {
-        console.error("Error processing message:", error);
-
-        // Add error message
-        const errorMessage: CoreMessage = {
-          role: "assistant",
-          content: "Sorry, I encountered an error processing your request.",
-        };
-
-        updateComponent({
-          ...component,
-          data: {
-            ...component.data,
-            messages: [...component.data.messages, errorMessage],
-          },
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    processMessages();
-  }, [
-    component.data.messages,
-    updateComponent,
-    loading,
-    lastProcessedMessageId,
-  ]);
+  // Add this to track which messages we've already processed
+  const [processedMessages, setProcessedMessages] = useState<Set<string>>(
+    new Set(),
+  );
 
   useEffect(() => {
     console.log("==== CHAT COMPONENT EFFECT TRIGGERED ====");
@@ -197,7 +64,93 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
       console.log("Scrolled to bottom, height:", chatRef.current.scrollHeight);
     }
+
+    // The dependency is just component - React will detect changes to the entire object
   }, [component]);
+
+  useEffect(() => {
+    // Process new user messages through AI SDK
+    const processNewMessage = async () => {
+      // Only process if we have messages and we can update the component
+      if (
+        !component.data.messages ||
+        !component.data.messages.length ||
+        !updateComponent ||
+        processingMessage
+      ) {
+        return;
+      }
+
+      // Look at the last message
+      const lastMessage =
+        component.data.messages[component.data.messages.length - 1];
+      const isUserMessage =
+        lastMessage.role === "user" || lastMessage.sender === "user";
+
+      // Create a unique ID for the message to track if we've processed it
+      const messageKey = JSON.stringify(lastMessage);
+
+      // Only process new user messages that we haven't processed yet
+      if (isUserMessage && !processedMessages.has(messageKey)) {
+        setProcessingMessage(true);
+
+        try {
+          // Mark this message as processed
+          setProcessedMessages((prev) => {
+            const newSet = new Set(prev);
+            newSet.add(messageKey);
+            return newSet;
+          });
+
+          // Convert messages to CoreMessage format
+          const coreMessages = component.data.messages.map((msg) => ({
+            role: msg.role || (msg.sender === "user" ? "user" : "assistant"),
+            content: msg.content || msg.text || "",
+          }));
+
+          // Call the API
+          const response = await fetch("/api/completion", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ messages: coreMessages }),
+          });
+
+          const responseData = await response.json();
+          console.log("AI API response:", responseData);
+
+          if (responseData.text) {
+            // Create an assistant message with the response
+            const assistantMessage = {
+              role: "assistant",
+              content: responseData.text,
+            };
+
+            // Add the assistant message to the chat
+            updateComponent({
+              ...component,
+              data: {
+                ...component.data,
+                messages: [...component.data.messages, assistantMessage],
+              },
+            });
+          }
+        } catch (error) {
+          console.error("Error processing message with AI:", error);
+        } finally {
+          setProcessingMessage(false);
+        }
+      }
+    };
+
+    processNewMessage();
+  }, [
+    component.data.messages,
+    updateComponent,
+    processingMessage,
+    processedMessages,
+  ]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -270,7 +223,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
         <h3 className="text-lg font-bold text-blue-800 mb-3">Chat</h3>
 
         <div className="flex-grow flex flex-col">
-          {loading && (
+          {processingMessage && (
             <div className="text-blue-500 text-center my-2">Processing...</div>
           )}
 
@@ -302,17 +255,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
                     }`}
                     style={{ maxWidth: "80%" }}
                   >
-                    {
-                      typeof content === "string"
-                        ? content
-                        : Array.isArray(content)
-                          ? content
-                              .filter((part) => part.type === "text")
-                              .map((part, partIndex) => (
-                                <div key={partIndex}>{part.text}</div>
-                              ))
-                          : String(content) // Fallback for any other type
-                    }
+                    {content || "No message content"}
                   </div>
                 );
               })}
