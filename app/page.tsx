@@ -1,4 +1,4 @@
-'use client'
+"use client";
 import React, { useState, useRef, useEffect } from "react";
 import {
   Component,
@@ -24,12 +24,10 @@ const App = () => {
   // Add a new component to the canvas
   const addComponent = (type: "input" | "chat") => {
     console.log(`Adding new ${type} component...`);
-    
+
     // Create proper data structure based on component type
-    const componentData = type === "input" 
-      ? { value: "" } 
-      : { messages: [] };
-      
+    const componentData = type === "input" ? { value: "" } : { messages: [] };
+
     const newComponent = {
       id: `component-${nextId}`,
       type,
@@ -40,14 +38,14 @@ const App = () => {
     };
 
     console.log(`Created new ${type} component:`, JSON.stringify(newComponent));
-    
+
     // Use functional update to ensure we have the latest state
-    setComponents(prevComponents => {
+    setComponents((prevComponents) => {
       const updated = [...prevComponents, newComponent];
       console.log("New components state:", JSON.stringify(updated));
       return updated;
     });
-    
+
     setNextId(nextId + 1);
   };
 
@@ -103,19 +101,29 @@ const App = () => {
   // Complete a connection to a target component
   const completeConnection = (targetId: string) => {
     if (connecting && connecting.source !== targetId) {
-      console.log("Completing connection from", connecting.source, "to", targetId);
-      
+      console.log(
+        "Completing connection from",
+        connecting.source,
+        "to",
+        targetId,
+      );
+
       // Find the source and target components
-      const sourceComponent = components.find(comp => comp.id === connecting.source);
-      const targetComponent = components.find(comp => comp.id === targetId);
-      
+      const sourceComponent = components.find(
+        (comp) => comp.id === connecting.source,
+      );
+      const targetComponent = components.find((comp) => comp.id === targetId);
+
       // Only connect if source is input and target is chat
-      if (sourceComponent?.type !== "input" || targetComponent?.type !== "chat") {
+      if (
+        sourceComponent?.type !== "input" ||
+        targetComponent?.type !== "chat"
+      ) {
         console.log("Invalid connection: can only connect input to chat");
         setConnecting(null);
         return;
       }
-      
+
       // Prevent duplicate connections
       const connectionExists = connections.some(
         (conn) => conn.source === connecting.source && conn.target === targetId,
@@ -155,21 +163,25 @@ const App = () => {
   // Submit message from input component
   const submitMessage = (sourceId: string) => {
     console.log("===== SUBMIT MESSAGE START =====");
-    
+
     // Find the input component
     const inputComponent = components.find((comp) => comp.id === sourceId);
-    if (!inputComponent || inputComponent.type !== "input" || !inputComponent.data.value.trim()) {
+    if (
+      !inputComponent ||
+      inputComponent.type !== "input" ||
+      !inputComponent.data.value.trim()
+    ) {
       console.error("Invalid input component or empty message");
       return;
     }
-    
+
     // Find connected chat components
     const connections = sourceConnections(sourceId);
     if (connections.length === 0) {
       console.error("No connections found");
       return;
     }
-    
+
     // Create the message
     const messageText = inputComponent.data.value;
     const newMessage = {
@@ -178,16 +190,16 @@ const App = () => {
       sender: "user",
       timestamp: new Date().toISOString(),
     };
-    
+
     console.log("Created message:", newMessage);
-    
+
     // Directly modify the chat components that are connected to this input
-    connections.forEach(conn => {
+    connections.forEach((conn) => {
       const targetId = conn.target;
-      
-      // Force a complete component state update 
-      setComponents(prev => {
-        return prev.map(comp => {
+
+      // Force a complete component state update
+      setComponents((prev) => {
+        return prev.map((comp) => {
           // If this is the target chat component, add the message
           if (comp.id === targetId && comp.type === "chat") {
             // Create a brand new component object
@@ -195,39 +207,41 @@ const App = () => {
               ...comp,
               data: {
                 messages: [
-                  ...(Array.isArray(comp.data?.messages) ? comp.data.messages : []),
-                  newMessage
-                ]
-              }
+                  ...(Array.isArray(comp.data?.messages)
+                    ? comp.data.messages
+                    : []),
+                  newMessage,
+                ],
+              },
             };
           }
           return comp;
         });
       });
     });
-    
-    // Clear the input value 
-    setComponents(prev => {
-      return prev.map(comp => {
+
+    // Clear the input value
+    setComponents((prev) => {
+      return prev.map((comp) => {
         if (comp.id === sourceId) {
           return {
             ...comp,
             data: {
               ...comp.data,
-              value: ""
-            }
+              value: "",
+            },
           };
         }
         return comp;
       });
     });
-    
+
     console.log("===== SUBMIT MESSAGE END =====");
   };
-  
+
   // Helper function to find connections from a source
   const sourceConnections = (sourceId: string) => {
-    return connections.filter(conn => conn.source === sourceId);
+    return connections.filter((conn) => conn.source === sourceId);
   };
 
   // Delete a component and its connections
@@ -286,17 +300,17 @@ const App = () => {
 
   return (
     <div className="flex flex-col h-screen">
-      <div className="bg-gray-100 p-3 border-b">
-        <h2 className="text-xl font-bold mb-2">Flow Canvas</h2>
+      <div className="bg-gray-100 p-2 border-b flex flex-row space-x-2">
+        <h2 className="text-black text-xl font-bold mb-2">Flow Canvas</h2>
         <div className="flex space-x-4">
           <button
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="text-sm px-4 bg-blue-500 text-white rounded hover:bg-blue-600"
             onClick={() => addComponent("input")}
           >
             Add Input
           </button>
           <button
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="text-sm px-4 bg-blue-500 text-white rounded hover:bg-blue-600"
             onClick={() => addComponent("chat")}
           >
             Add Chat
@@ -332,7 +346,9 @@ const App = () => {
               className="cursor-pointer"
               onDoubleClick={() => {
                 // Remove this connection on double click
-                setConnections(connections.filter(conn => conn.id !== connection.id));
+                setConnections(
+                  connections.filter((conn) => conn.id !== connection.id),
+                );
               }}
             />
           ))}
@@ -390,9 +406,11 @@ const App = () => {
               connecting={connecting}
               deleteComponent={deleteComponent}
               updateComponent={(updatedComponent) => {
-                setComponents(components.map((comp) => 
-                  comp.id === updatedComponent.id ? updatedComponent : comp
-                ));
+                setComponents(
+                  components.map((comp) =>
+                    comp.id === updatedComponent.id ? updatedComponent : comp,
+                  ),
+                );
               }}
             />
           ),
@@ -400,7 +418,6 @@ const App = () => {
       </div>
 
       <div className="bg-gray-100 p-2 border-t text-sm">Version 0.1.0</div>
-
     </div>
   );
 };
